@@ -1,0 +1,150 @@
+#后台
+rm(list = ls())
+options(stringsAsFactors = F)
+gc()
+setwd("/home/datahup/syj/ESCC/copykat-5/")
+library(Seurat)
+library(infercnv)
+#### CopyKAT（自动化识别肿瘤）#####
+load(file = "/home/datahup/syj/NSCC/step10_1copykat_CNV/Epi_output.Rdata")
+table(Epi@active.ident)
+counts <- as.matrix(Epi@assays$RNA@counts)
+##运行时间较长 
+#时间可能要两天   Time difference of 2.45014 days
+library(copykat)
+cnv <- copykat(rawmat=counts,
+               ngene.chr=5,
+               sam.name="ESCC",
+               n.cores=8)
+# ngene.chr参数是过滤细胞的一个标准，它要求被用来做CNV(拷贝数变异）预测的细胞，一个染色体上至少有5个基因。
+# sam.name定义样本名称 (sample name)，会给出来的文件加前缀
+save(cnv, "/home/datahup/syj/ESCC/copykat-5/cnv.rdata")
+
+
+
+#9.26：将拷贝数变异结果保存到单细胞数据中-------
+rm(list = ls())
+options(stringsAsFactors = F)
+gc()
+setwd("/home/datahup/syj/ESCC/copykat-5/")
+mallignant <- read.delim("/home/datahup/syj/ESCC/copykat-5/ESCC_copykat_prediction.txt")
+
+mall <- mallignant
+rownames(mall) <- mall[,1]
+length(unique(mall$cell.names)) # 有重复
+mall <- mall[!duplicated(mall$cell.names),] # 去除重复
+rownames(mall) <- mall[,1]
+names(mall)
+
+table(mall$copykat.pred)
+#aneuploid     非整倍体(突变染色体)
+#diploid       正常染色体
+#not.defined   未识别(随便：想归类到哪归类到哪，也可以归纳为非整倍体)
+
+#归纳数据、修改名字
+mall$copykat.pred <- ifelse(mall$copykat.pred == "aneuploid","cancer cell","Epithelial cell")
+table(mall$copykat.pred)
+
+b <- data.frame('copykat.pred' = mall[,-1])
+rownames(b) <- rownames(mall)
+table(b$copykat.pred)
+
+#加载上皮细胞-----
+load(file = "/home/datahup/syj/NSCC/step10_1copykat_CNV/Epi_output.Rdata")
+table(Epi@active.ident)
+scRNA <- Epi
+# 把细胞的良恶性信息加入metadata--------
+library(Seurat)
+scRNA <- AddMetaData(scRNA, metadata = b)
+table(scRNA@meta.data[["copykat.pred"]])
+save(scRNA,file = "/home/datahup/syj/ESCC/copykat-5/copykat_Epi.Rdata")
+
+#再跑一遍单细胞流程，否则映射图非常丑----------
+library(Seurat)
+load(file = "/home/datahup/syj/ESCC/copykat-5/copykat_Epi.Rdata")
+table(Idents(scRNA)) 
+scRNA[["old.ident"]] <- Idents(object = scRNA)
+
+scRNA <- NormalizeData(scRNA)
+scRNA <- FindVariableFeatures(scRNA, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(scRNA)
+scRNA <- ScaleData(scRNA, features = all.genes)
+scRNA <- RunPCA(scRNA, features = VariableFeatures(object = scRNA))
+ElbowPlot(scRNA)
+#细胞聚类 KNN算法
+library(clustree)
+scRNA <- FindNeighbors(scRNA, dims = 1:10)#查看肘部图,即选取前10个来分类细胞。
+scRNA <- FindClusters(object = scRNA,
+                                resolution = c(seq(0,1,by = 0.1)))
+clustree(scRNA@meta.data, prefix = "RNA_snn_res.") 
+#选择Cluster = 0.1
+Idents(object = scRNA) <- "RNA_snn_res.0.1"
+scRNA@meta.data$seurat_clusters = scRNA@meta.data$RNA_snn_res.0.1
+
+#可视化copykat结果------
+#模板
+# plot = DimPlot(scRNA_harmony, 
+#                reduction = "umap", 
+#                label=T,
+#                label.box = T, 
+#                cols = pal, 
+#                raster = T) + NoLegend()
+# UMAP
+scRNA <- RunUMAP(scRNA, dims = 1:10)
+p1 <- DimPlot(scRNA, group.by = "RNA_snn_res.0.1", 
+              label = T,label.box = T,
+              raster = T) + NoLegend()
+p2 <- DimPlot(scRNA, group.by = "copykat.pred",
+              label=T,label.box = T,
+              #cols = pal,
+              raster = T) + NoLegend()
+pc <- p1 + p2
+pc
+# ggsave("pred_mallignant.pdf", pc, width = 12, height = 8,
+#        path = "/home/datahup/syj/ESCC/copykat-5/")
+
+# TSNE
+scRNA <- RunTSNE(scRNA, dims = 1:10,check_duplicates = FALSE)
+p1 <- DimPlot(scRNA,group.by = "RNA_snn_res.0.1",
+              reduction = "tsne",
+              label = T,label.box = T,raster=T)+NoLegend()
+p2 <- DimPlot(scRNA,group.by = "copykat.pred",
+              reduction = "tsne",
+              label = T,label.box = T,raster=T)+NoLegend()
+pc <- p1 + p2
+pc
+#保存结果
+save(scRNA,file = "/home/datahup/syj/ESCC/copykat-5/copykat_Epi.Rdata")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
